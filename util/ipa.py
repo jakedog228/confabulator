@@ -29,6 +29,8 @@ def load_data(data_file_path="arpabet.dat"):
 
 arpabet_to_ipa_chars = load_data()
 def arpabet_to_ipa(arpabet_chars: list[str]):
+    if not arpabet_chars or not all(arpabet_char for arpabet_char in arpabet_chars):
+        return IPAString()
     ipa_chars = [ipa_char for arpabet_char in arpabet_chars for ipa_char in arpabet_to_ipa_chars[sub(r'\d+', '', arpabet_char)]]  # flatten list of tuples AND remove numbers (nuances) from ARPABET characters
     ipa_string = IPAString(ipa_chars=ipa_chars)
     return ipa_string

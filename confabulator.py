@@ -1,34 +1,13 @@
 from util.ipa import arpabet_to_ipa
+from util.common import C, get_cmudict, remove_word_version, remove_phoneme_stress, normalize_quotes
 from g2p_en import G2p
-import re
 
-# nltk.download('averaged_perceptron_tagger_eng')
+
+CREATIVITY = 0.3  # amount of phonetic fuzziness the program uses to find alternate words (0 = no change, 1 = 1 change, ...)
+FORCE_NOVELTY = True  # whether it searches all other words before using the original words
+
+
 g2p = G2p()  # g2p directly intelligently words to ARPABET phonemes (not a lookup table)
-
-
-class C:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    CYAN = '\033[96m'
-    END = '\033[0m'
-
-
-def get_cmudict():
-    # ref: http://www.speech.cs.cmu.edu/cgi-bin/cmudict
-    with open('cmudict-0.7b', 'r') as f:
-        raw = f.read()
-    uncomment = [definition.split('  ') for definition in raw.split('\n')[:-1] if not definition.startswith(';;;')]
-    word_to_phoneme = {word: pronunciation.split(' ') for word, pronunciation in uncomment}
-    phoneme_to_word = {str(b): a for a, b in word_to_phoneme.items()}  # reverse dictionary to get words from pronunciations; NOTE: this will overwrite any words with the same pronunciations
-    return word_to_phoneme, phoneme_to_word
-
-
-def get_partner(word, pronunciation, d, d_rev):
-    partner = d_rev.get(str(['DH' if syl == 'TH' else syl for syl in pronunciation]), None)
-    if partner and partner != word:
-        return partner
-    return None
-
 
 # # RUNS TOO SLOW
 # def group_partitions(lst):
@@ -76,19 +55,55 @@ def get_partner(word, pronunciation, d, d_rev):
 #
 #     return constructed_words
 
+from difflib import SequenceMatcher  # very creative!
+
+def smart_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str], errors: int = 1) -> bool:
+    """ use phonetic similarity to check if the word's phonemes match the first phonemes in the list """
+    if len(word_phonemes) > len(
+        remaining_phonemes): return False  # if the word is longer than the remaining phonemes, it can't match
+    word_ipa = arpabet_to_ipa(word_phonemes)
+    comparison_ipa = arpabet_to_ipa(remaining_phonemes[:len(word_phonemes)])
+
+    slips = 0  # 4 * abs(len(word_ipa) - len(comparison_ipa))
+    differences = {}
+    for i in range(min(len(word_ipa), len(comparison_ipa))):  # iterate over phonemes
+        difference = set(word_ipa[i].descriptors) ^ set(
+            comparison_ipa[i].descriptors)  # difference between phonemes
+        if difference:
+            differences[i] = difference
+
+        slips += len(difference) / 2  # add the number of differences to the slip count
+
+    if slips > errors:
+        return False
+    else:
+        print(f'{C.GREEN}Matched: {comparison_ipa} -> {word_ipa} | {differences} {C.END}')
+        return True
+
+def fuzzy_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str], creativity: float = 0.1) -> bool:
+    """ check if the word's phonemes match the first phonemes in the list """
+    return SequenceMatcher(None, word_phonemes, remaining_phonemes[:len(word_phonemes)]).ratio() >= 1 - creativity
+
+def strict_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str]) -> bool:
+    """ check if the word's phonemes match the first phonemes in the list """
+    return word_phonemes == remaining_phonemes[:len(word_phonemes)]
 
 # runs in O(n^2) time at worst case, usually O(n)!
 def confabulate(phrase: str, word_to_phoneme) -> str:
     """ given a phrase, return a confabulated list of words that possess the same phonemes """
     words = normalize_quotes(phrase).upper().split(' ')  # split phrase into words
-    phoneme_chunks = [(word, g2p(word)) for word in words]  # get phonemes for each word
-    all_phonemes = [phoneme for word, phonemes in phoneme_chunks for phoneme in phonemes]  # flatten phoneme chunks to arbitrary phonemes
+    phoneme_chunks = [(word, remove_phoneme_stress(g2p(word))) for word in
+                      words]  # get phonemes for each word, remove stresses
+    all_phonemes = [phoneme for word, phonemes in phoneme_chunks for phoneme in
+                    phonemes]  # flatten phoneme chunks to arbitrary phonemes
     print(f'{C.CYAN}Split phonemes: {all_phonemes}{C.END}')
 
     cmu_dict_list = list(word_to_phoneme.items())
     # shuffle(cmu_dict_list)  # shuffle to randomize the order of the words
     cmu_dict_list.sort(key=lambda x: len(x[1]), reverse=True)  # prefer longer words first
-    cmu_dict_list = [(word, phonemes) for word, phonemes in cmu_dict_list if word not in words] + phoneme_chunks  # move the original words to the list of words to search through (prefer new words)
+    cmu_dict_list = [(word, remove_phoneme_stress(phonemes)) for word, phonemes in cmu_dict_list if not any(
+        starting_word in word for starting_word in
+        words)] + phoneme_chunks  # move the original words to the list of words to search through (prefer new words)
     print(f'{C.CYAN}Running on a sorted CMU Dictionary of {len(cmu_dict_list)} words!{C.END}')
 
     def find_next_word(found_words: list[str], remaining_phonemes: list[str]) -> list[str] or None:
@@ -96,7 +111,7 @@ def confabulate(phrase: str, word_to_phoneme) -> str:
         if not remaining_phonemes:  # if there are no remaining phonemes, then we have found a valid solution!
             return found_words
         for word, phonemes in cmu_dict_list:
-            if phonemes == remaining_phonemes[:len(phonemes)]:
+            if strict_phonetic_match(phonemes, remaining_phonemes):  # if the phonemes don't match, skip
                 # A word was found for the remaining phonemes, recurse!
                 solution = find_next_word(found_words + [word], remaining_phonemes[len(phonemes):])
                 if solution:  # if a solution was found, return it
@@ -113,29 +128,10 @@ def confabulate(phrase: str, word_to_phoneme) -> str:
     assert found_words
 
     # use regex to filter out 'alternate word' notation, i.e. "reap what you sow(1)"re.sub(r'\(\d+\)', '', word)
-    return re.sub(r'\(\d+\)', '', ' '.join(found_words).lower())
-
-
-def get_oddities():
-    """ find words that are pronounced the same as each other EXCEPT for 'TH' -> 'DH' """
-    word_to_phoneme, phoneme_to_word = get_cmudict()
-    for word, pronunciation in word_to_phoneme.items():
-        if ('TH' in pronunciation) and (partner := get_partner(word, pronunciation, word_to_phoneme, phoneme_to_word)):
-            print(f'{word} -> {partner} ({arpabet_to_ipa(word_to_phoneme[word])} -> {arpabet_to_ipa(word_to_phoneme[partner])})')
-
+    return remove_word_version(' '.join(found_words).lower())
 
 def test_confabulation():
     word_to_phoneme, phoneme_to_word = get_cmudict()
-    phrase = input('Enter a phrase: ') or "there's nothing to do in this entire college"
+    phrase = input('Enter a phrase: ') or "the internal revenue service is the greatest agency of all"  # "there's nothing to do in this entire college"
     confabulated = confabulate(phrase, word_to_phoneme)
     print(f'{C.CYAN}Confabulated: {confabulated}{C.END}')
-
-
-
-def normalize_quotes(inp: str) -> str:
-    return inp.replace('’', "'").replace('“', '"').replace('”', '"')
-
-
-if __name__ == '__main__':
-    # get_oddities()
-    test_confabulation()
