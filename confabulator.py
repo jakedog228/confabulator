@@ -33,7 +33,7 @@ def smart_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str]
                 return False
 
     # if it gets through all the phonemes, it's a match!
-    print(f'{C.GREEN}Matched: {comparison_ipa} -> {word_ipa} | {differences} {C.END}')
+    print(f'{C.GREEN}+ Matched: {comparison_ipa} -> {word_ipa} | {differences} {C.END}')
     return True
 
 def fuzzy_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str], creativity: float = 0.1) -> bool:
@@ -45,28 +45,28 @@ def strict_phonetic_match(word_phonemes: list[str], remaining_phonemes: list[str
     return word_phonemes == remaining_phonemes[:len(word_phonemes)]
 
 # runs in O(n^2) time at worst case, usually O(n)!
-def confabulate(phrase: str, word_to_phoneme: dict) -> str:
+def confabulate(phrase: str, word_to_phoneme: dict, match_function) -> str:
     """ given a phrase, return a confabulated list of words that possess the same phonemes """
     words = normalize_quotes(phrase).lower().split(' ')  # split phrase into words
     phoneme_chunks = [(word, remove_phoneme_stress(g2p(word))) for word in words]  # get phonemes for each word, remove stresses
     all_phonemes = [phoneme for word, phonemes in phoneme_chunks for phoneme in phonemes]  # flatten phoneme chunks to arbitrary phonemes
-    print(f'{C.CYAN}Split phonemes: {all_phonemes}{C.END}')
+    print(f'{C.CYAN}@@ Split phonemes: {all_phonemes} @@{C.END}')
 
     # sort the CMU dict to prefer longer words that aren't in the original phrase
     cmu_dict_list = list(word_to_phoneme.items())
     cmu_dict_list.sort(key=lambda x: len(x[1]), reverse=True)  # prefer longer words first
-    cmu_dict_list = [(word, remove_phoneme_stress(phonemes)) for word, phonemes in cmu_dict_list if not any(word in starting_word for starting_word in words)] + phoneme_chunks  # move the original words to the list of words to search through (prefer new words)
-    print(f'{C.CYAN}Running on a sorted CMU Dictionary of {len(cmu_dict_list)} words!{C.END}')
+    cmu_dict_list = [(word, remove_phoneme_stress(phonemes)) for word, phonemes in cmu_dict_list if not any(starting_word in word for starting_word in words)] + phoneme_chunks  # move the original words to the list of words to search through (prefer new words)
+    print(f'{C.CYAN}@@ Running on a sorted CMU Dictionary of {len(cmu_dict_list)} words! @@{C.END}')
 
     def find_next_word(found_words: list[str], remaining_phonemes: list[str]) -> list[str] or None:
         """ recursive search for a next word that matches the remaining phonemes """
-        print(f'{C.GREEN}Finding: {found_words} + {remaining_phonemes}{C.END}')
+        print(f'{C.GREEN}+ Finding: {found_words} + {remaining_phonemes}{C.END}')
         if not remaining_phonemes:  # if there are no remaining phonemes, then we have found a valid solution!
             return found_words
 
         # iterate over the sorted CMU dict to find a word that matches the remaining phonemes
         for word, phonemes in cmu_dict_list:
-            if smart_phonetic_match(phonemes, remaining_phonemes):  # if the phonemes don't match, skip
+            if match_function(phonemes, remaining_phonemes):  # if the phonemes don't match, skip
                 # A word was found for the remaining phonemes, recurse!
                 solution = find_next_word(found_words + [word], remaining_phonemes[len(phonemes):])
                 if solution:  # if a solution was found, return it
@@ -75,7 +75,7 @@ def confabulate(phrase: str, word_to_phoneme: dict) -> str:
                     continue
         else:
             # No word was found for remaining phonemes
-            print(f'{C.RED}Failed: {found_words} + {remaining_phonemes}{C.END}')
+            print(f'{C.RED}- Failed: {found_words} + {remaining_phonemes}{C.END}')
             return None
 
     # this should never return None, as there should always be at least one solution (the original phrase itself)
@@ -86,8 +86,17 @@ def confabulate(phrase: str, word_to_phoneme: dict) -> str:
     return remove_word_version(' '.join(found_words).lower())
 
 if __name__ == '__main__':
-    word_to_phoneme, phoneme_to_word = get_cmudict()
-    phrase = input('Enter a phrase (or leave empty for default): ') or "the internal revenue service is the greatest agency of all"
+
+    # select a match type
+    match_type = input('Enter a match type (smart, fuzzy, strict): ') or 'strict'
+    match_func = {'smart': smart_phonetic_match, 'fuzzy': fuzzy_phonetic_match, 'strict': strict_phonetic_match}[match_type]
+
+    # get the phrase to confabulate
+    phrase = input('Enter a phrase (or leave empty for a default): ') or "the internal revenue service is the greatest agency of all"
     phrase = phrase.replace(',','').replace('.','').lower()
-    confabulated = confabulate(phrase, word_to_phoneme)
-    print(f'{C.CYAN}Confabulated: {confabulated}{C.END}')
+
+    # run the confabulator
+    print(f'{C.CYAN}@@ Running `{match_type}` on "{phrase}" @@{C.END}')
+    word_to_phoneme, phoneme_to_word = get_cmudict()
+    confabulated = confabulate(phrase, word_to_phoneme, match_func)
+    print(f'{C.CYAN}@@ Confabulated: {confabulated} @@{C.END}')
