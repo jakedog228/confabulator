@@ -1,6 +1,8 @@
 import re
+from nltk.corpus import cmudict
 
-class C:
+
+class Color:
     RED = '\033[91m'
     YELLOW = '\033[93m'
     GREEN = '\033[92m'
@@ -21,15 +23,17 @@ def remove_word_version(word: str) -> str:
     return re.sub(r'\(\d+\)', '', word)
 
 
-def get_cmudict():
+def get_cmudict() -> tuple[dict[str, list[str]], dict[str, str]]:
     """ load in the CMU Dictionary """
-    print(f'{C.YELLOW}Loading CMU Dictionary...{C.END}')
-    # ref: http://www.speech.cs.cmu.edu/cgi-bin/cmudict
-    with open('cmudict-0.7b', 'r') as f:
-        raw = f.read()
-    uncomment = [definition.split('  ') for definition in raw.split('\n')[:-1] if not definition.startswith(';;;')]
-    # NOTE: by some error, some words like "PATHOGENESIS" have 3 spaces instead of 2 between the word and pronunciation
-    word_to_phoneme = {word: pronunciation.strip().split(' ') for word, pronunciation in uncomment}
+    print(f'{Color.YELLOW}Loading CMU Dictionary...{Color.END}')
+
+    # get CMU dict from nltk corpus
+    cmudict.ensure_loaded()
+    raw = cmudict.dict()
+
+    # lookup and reverse lookup dictionaries
+    word_to_phoneme = {word: pronunciation[0] for word, pronunciation in raw.items()}  # NOTE: this will overwrite any words with multiple pronunciations
     phoneme_to_word = {str(b): a for a, b in word_to_phoneme.items()}  # reverse dictionary to get words from pronunciations; NOTE: this will overwrite any words with the same pronunciations
-    print(f'{C.YELLOW}CMU Dictionary loaded!{C.END}')
+
+    print(f'{Color.YELLOW}CMU Dictionary loaded!{Color.END}')
     return word_to_phoneme, phoneme_to_word
